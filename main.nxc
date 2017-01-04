@@ -361,14 +361,14 @@ task main() {
 						default:
 							break;
 					}
-					if(!skip) {
-						set_speed(coords, p_comp, REGULAR_SPEED);
-					}
 				}
 				break;
 
 			default:
 				break;
+		}
+		if(!skip) {
+			set_speed(coords, p_comp, REGULAR_SPEED);
 		}
 
 		elapsed_time = (CurrentTick() - first_tick) / 1000;
