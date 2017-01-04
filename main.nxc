@@ -1,6 +1,11 @@
 /* time to wait between each loop pass, in ms */
 #define WAIT_INTERVAL 100
 
+/* time limitation in seconds */
+#define TIME_LIMIT 240
+/* time to ge tto the base */
+#define CRITICAL_TIME 180
+
 /* touch sensor left */
 #define SENSOR_T_L IN_1
 /* touch sensor right */
@@ -17,12 +22,18 @@
 /* both engines */
 #define ENGINE_B OUT_AB
 
-/* For the emergency dodge */
+/* Some range levels */
+#define DISTANT_RANGE 70
+#define WARNING_RANGE 35
 #define EMERGENCY_RANGE 20
+/* the duration of the reverse gear when an obstacle is seen, in ms */
+#define OBSTACLE_BACKWARDS_DURATION 200
 
 /* The refine the precision, change theese */
 #define L_DARK_THRESHOLD 20
 #define L_WHITE_THRESHOLD 40
+/* the duration of the reverse gear when the white line is seen, in ms */
+#define LINE_BACKWARDS_DURATION 300
 
 /* Motion calculation values (in meters) */
 #define WHEEL_RADIUS 0.078
@@ -30,6 +41,7 @@
 
 /* Motion speed values */
 #define REGULAR_SPEED 75
+#define LOW_SPEED 50
 #define ROTATION_SPEED 50
 
 /* Angle sensivity in degrees */
@@ -39,6 +51,22 @@
 #define R_PID_P PID_5
 #define R_PID_I PID_5
 #define R_PID_D PID_2
+
+enum EStatus {STATUS_START, STATUS_RUNNING, STATUS_DODGE, STATUS_LINE};
+
+/* global sound infos, because it's i nanother task */
+typedef struct {
+	unsigned int current;
+	bool loop;
+} Sound_Infos;
+/* Global variable to specify which sound is played
+Possible values are:
+0 no sound,
+1 Rick Roll,
+2 Queen,
+3 Finish sound
+*/
+Sound_Infos sound_infos;
 
 /* a structure to compute the position */
 typedef struct {
@@ -108,8 +136,9 @@ void do_rotation(float motor_angle) {
 	OnFwdSync(ENGINE_B, ROTATION_SPEED, 0);
 	/*RotateMotor(ENGINE_R, ROTATION_SPEED, motor_angle);
 	RotateMotor(ENGINE_L, ROTATION_SPEED, -motor_angle);*/
-	RotateMotorExPID(ENGINE_B, ROTATION_SPEED, motor_angle, 100, true, true, R_PID_P, R_PID_I, R_PID_D);
 
+	/* TODO: PID modified with angle? */
+	RotateMotorExPID(ENGINE_B, ROTATION_SPEED, motor_angle, 100, true, true, R_PID_P, R_PID_I, R_PID_D);
 }
 
 /* Motion relative functions, they all update the position */
@@ -148,8 +177,11 @@ void sensors_setup() {
 
 /* Checks the obstacles sensors status :
 returns 0 when no obstacle
-returns 1 when the obstacle is in range from 20 to 255 cm
-returns 2 when the obstacle triggered the touch sensors, or when is in range lower than 20 cm */
+returns 1 when collision on the left
+returns 2 when collision on the right
+returns 3 when distant obstacle
+returns 4 when obstacle warning
+returns 5 when obstacle emergency
 /* We assume that this function is called often enough in order not to calculate the average on all the sensors values */
 /* In my opinion, the robot should behave the same way when the range is lower than 20 cm or when a touch sensor is activated,
 to do an « emergency obstacle dodge. */
@@ -158,7 +190,12 @@ int obstacle_sensors_status() {
 	int a;
 
 	/* Touch sensors, the important ones */
-	a = Sensor(SENSOR_T_L) || Sensor(SENSOR_T_R);
+	a = Sensor(SENSOR_T_L);
+	if(a) {
+		return 1;
+	}
+
+	a = Sensor(SENSOR_T_R);
 	if(a) {
 		return 2;
 	}
@@ -166,9 +203,11 @@ int obstacle_sensors_status() {
 	/* Ultrasonic sensor */
 	a = SensorUS(SENSOR_US);
 	if(a < EMERGENCY_RANGE) {
-		return 2;
-	} else if(a > 20 && a < 255) {
-		return 1;
+		return 5;
+	} else if(a < WARNING_RANGE) {
+		return 4;
+	} else if(a < DISTANT_RANGE) {
+		return 3;
 	}
 
 	return 0;
@@ -191,11 +230,149 @@ int light_sensor_status() {
 	return 0;
 }
 
+task PlaySoundTask() {
+	string s_file;
+	bool ok = true;
+
+	switch(sound_infos.current) {
+		case 1:
+			s_file = "rick.rso";
+			break;
+
+		case 2:
+			s_file = "queen.rso";
+			break;
+
+		case 3:
+			s_file = "finish.rso";
+			break;
+
+		default:
+			ok = false;
+			break;
+	}
+
+	if(ok) {
+		PlayFileEx(s_file, 4, sound_infos.loop);
+	}
+}
+
+void stop_sound() {
+	if(sound_infos.current) {
+		StopTask(PlaySoundTask);
+		sound_infos.current = 0;
+	}
+}
+
+void play_sound(unsigned int sound, bool loop) {
+	if(sound_infos.current) {
+		stop_sound();
+	}
+	if(sound) {
+		sound_infos.current = sound;
+		sound_infos.loop = loop;
+		StartTask(PlaySoundTask);
+	}
+}
+
 task main() {
+	unsigned long elapsed_time, first_tick;
 	Coords coords;
 	Pos_Computation p_comp;
+	EStatus status = STATUS_START;
+	int sensor, r;
+	bool skip;
+
+	sound_infos.current = 0;
 
 	zero_coords(coords);
 	zero_p_comp(p_comp);
-	set_angle(coords, p_comp, 270);
+	
+	elapsed_time = 0;/* in seconds */
+	first_tick = CurrentTick();
+	while(elapsed_time < TIME_LIMIT) {
+		skip = false;
+
+		switch(status) {
+			case STATUS_START:
+			case STATUS_RUNNING:
+				/* We first check the line sensor */
+				sensor = light_sensor_status();
+				switch(sensor) {
+					case 0:
+						if(status == STATUS_START) {
+							status = STATUS_RUNNING;
+						}
+						break;
+
+					case 1:
+						if(status == STATUS_START) {
+							/* ignore*/
+						} else if(status == STATUS_RUNNING && elapsed_time > CRITICAL_TIME) {/* Stop on the start area */
+							set_speed(coords, p_comp, 0);
+							Stop(true);
+						}
+						break;
+
+					case 2:
+						/* Go backwards */
+						skip = true;/* Skip to the next loop iteration */
+						set_speed(coords, p_comp, -LOW_SPEED);
+						Wait(LINE_BACKWARDS_DURATION);
+						set_speed(coords, p_comp, 0);
+						set_angle(coords, p_comp, (coords.angle + 180 + Random(90) * (Random(3)- 1)) % 360);/* mmh */
+						/* TODO : add a while loop to check the white line again */
+						break;
+
+					default:
+						break;
+				}
+				if(!skip) {
+					sensor = obstacle_sensors_status();
+					switch(sensor) {
+						case 1:
+						case 2:
+						case 5:
+							skip = true;/* Skip to the next loop iteration */
+							set_speed(coords, p_comp, -LOW_SPEED);
+							Wait(OBSTACLE_BACKWARDS_DURATION);
+							set_speed(coords, p_comp, 0);
+							while(obstacle_sensors_status() == sensor) {
+								set_angle(coords, p_comp, (coords.angle + 10 * ((sensor == 1)?1:(-1))) % 360);
+							}
+							break;
+
+						case 3:
+							skip = true;
+							set_speed(coords, p_comp, 0);
+							set_angle(coords, p_comp, (coords.angle + 10 * (Random(3) - 1)) % 360);
+							break;
+
+						case 4:
+							skip = true;
+							while(r = (Random(3) - 1) == 0);/* get -1 or 1 */
+							set_speed(coords, p_comp, 0);
+							while(obstacle_sensors_status() == sensor) {
+								set_angle(coords, p_comp, (coords.angle + 10 * r) % 360);
+							}
+							break;
+
+						case 0:
+						default:
+							break;
+					}
+					if(!skip) {
+						set_speed(coords, p_comp, REGULAR_SPEED);
+					}
+				}
+				break;
+
+			default:
+				break;
+		}
+
+		elapsed_time = (CurrentTick() - first_tick) / 1000;
+		Wait(WAIT_INTERVAL);
+	}
+
 }
