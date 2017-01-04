@@ -1,3 +1,6 @@
+/* time to wait between each loop pass, in ms */
+#define WAIT_INTERVAL 100
+
 /* touch sensor left */
 #define SENSOR_T_L IN_1
 /* touch sensor right */
@@ -20,6 +23,117 @@
 /* The refine the precision, change theese */
 #define L_DARK_THRESHOLD 20
 #define L_WHITE_THRESHOLD 40
+
+/* Motion calculation values (in meters) */
+#define WHEEL_RADIUS 0.078
+#define WHEELS_SPACING 0.104
+
+/* Motion speed values */
+#define REGULAR_SPEED 75
+#define ROTATION_SPEED 50
+
+/* Angle sensivity in degrees */
+#define ANGLE_SENSIVITY 10
+
+/* Rotation PID */
+#define R_PID_P PID_5
+#define R_PID_I PID_5
+#define R_PID_D PID_2
+
+/* a structure to compute the position */
+typedef struct {
+	float speed, last_speed;
+	unsigned long last_tick;
+} Pos_Computation;
+
+/* a structure to hold the position data, and to help with the computation */
+typedef struct {
+	float angle;/* must ALWAYS be between 0 and 359.99999999999999999 */
+	float x, y;
+} Coords;
+
+void zero_coords(Coords coords) {
+	coords.angle = 0;
+	coords.x = 0;
+	coords.y = 0;
+}
+
+void zero_p_comp(Pos_Computation p_comp) {
+	p_comp.speed = 0;
+	p_comp.last_speed = 0;
+	p_comp.last_tick = 0;
+}
+
+/* When need to convert the angular speed to the actual speed of the robot, assuming both of the wheels have the same speed */
+float motor_speed_to_speed(char motor_speed) {
+	return WHEEL_RADIUS * motor_speed;
+}
+
+/* we need to have a relation between the wheels angles and the robot angle */
+float angle_to_motor_angle(float angle) {
+	return angle * WHEELS_SPACING / WHEEL_RADIUS;
+}
+
+void update_pos(Coords coords, Pos_Computation p_comp) {
+	unsigned long tick = CurrentTick(), dt;
+
+	dt = tick - p_comp.last_tick;
+	p_comp.last_tick = tick;
+
+	coords.x += cos(coords.angle) * dt * p_comp.speed;
+	coords.y += sin(coords.angle) * dt * p_comp.speed;
+}
+
+/* changing the speed computes the ne position if needed */
+/* we assume that the both wheels are spinning at the same speed */
+/* This function is used to go strait ahead */
+void set_speed(Coords coords, Pos_Computation p_comp, char new_motor_speed) {
+	update_pos(coords, p_comp);
+	
+	if(new_motor_speed != p_comp.speed) {
+		p_comp.last_speed = p_comp.speed;
+		p_comp.speed = motor_speed_to_speed(new_motor_speed);
+
+		if(new_motor_speed != 0) {
+			OnFwdSync(ENGINE_B, new_motor_speed, 0);
+		} else {
+			Off(ENGINE_B);
+		}
+	}
+}
+
+/* Positive motor angle : rotate right */
+/* The motors SHOULD be stopped  beforce calling this function*/
+void do_rotation(float motor_angle) {
+	OnFwdSync(ENGINE_B, ROTATION_SPEED, 0);
+	/*RotateMotor(ENGINE_R, ROTATION_SPEED, motor_angle);
+	RotateMotor(ENGINE_L, ROTATION_SPEED, -motor_angle);*/
+	RotateMotorExPID(ENGINE_B, ROTATION_SPEED, motor_angle, 100, true, true, R_PID_P, R_PID_I, R_PID_D);
+
+}
+
+/* Motion relative functions, they all update the position */
+/* absolute angle, from the x and y pos and the current angle */
+void set_angle(Coords coords, Pos_Computation p_comp, float new_angle) {
+	float angle_difference, motor_angle;
+
+	if(coords.angle - ANGLE_SENSIVITY < new_angle && new_angle < coords.angle + (360 - ANGLE_SENSIVITY)) {/* No need to interrupt the motion */
+		/* Need to stop the wheels */
+		set_speed(coords, p_comp, 0);
+
+		angle_difference = ((new_angle - coords.angle) % 360);/* TODO: 2 inside the modulo */
+
+		/* Need to check the faster way to reach the angle */
+		/* between 0 and 180 -> turn left */
+		if(new_angle > 0 && new_angle < 180) {
+			motor_angle = angle_to_motor_angle(-angle_difference);
+		} else {/* between 180 and 360 -> turn right*/
+			motor_angle = angle_to_motor_angle(angle_difference);
+		}
+		do_rotation(motor_angle);
+		coords.angle = new_angle;
+	}
+}
 
 void sensors_setup() {
 	SetSensorTouch(SENSOR_T_L);
@@ -78,42 +192,10 @@ int light_sensor_status() {
 }
 
 task main() {
-	sensors_setup();
-	string str;
-	int a;
+	Coords coords;
+	Pos_Computation p_comp;
 
-	while(true) {
-		/*a = obstacle_sensors_status();
-		switch(a) {
-			case 1:
-				str = "Foreign obstacle!";
-				break;
-
-			case 2:
-				str = "Close obstacle!";
-				break;
-
-			default:
-				str = "Ok!";
-				break;
-		}*/
-
-		a = light_sensor_status();
-		switch(a) {
-			case 1:
-				str = "Starting area!";
-				break;
-
-			case 2:
-				str = "White line!";
-				break;
-
-			default:
-				str = "Ok!";
-				break;
-		}
-
-		TextOut(0, LCD_LINE3, str, 0x001);/* 0x001 clears the screen */
-		Wait(100);
-	}
+	zero_coords(coords);
+	zero_p_comp(p_comp);
+	set_angle(coords, p_comp, 270);
 }
