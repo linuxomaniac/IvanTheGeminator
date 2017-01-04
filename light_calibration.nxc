@@ -1,0 +1,9 @@
+#define SENSOR_L IN_3
+
+task main() {
+	SetSensorLight(SENSOR_L);
+	while(true) {
+		NumOut(0,LCD_LINE3, Sensor(SENSOR_L), 0x001);
+		Wait(100);
+	}
+}

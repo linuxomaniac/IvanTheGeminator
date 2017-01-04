@@ -21,6 +21,11 @@
 #define ENGINE_R OUT_B
 /* both engines */
 #define ENGINE_B OUT_AB
+/* combine harvester engine */
+#define ENGINE_H OUT_C
+
+/* harvester spinning speed */
+#define HARVESTER_SPEED 100
 
 /* Some range levels */
 #define DISTANT_RANGE 70
@@ -52,7 +57,7 @@
 #define R_PID_I PID_5
 #define R_PID_D PID_2
 
-enum EStatus {STATUS_START, STATUS_RUNNING, STATUS_DODGE, STATUS_LINE};
+enum EStatus {STATUS_START, STATUS_RUNNING};
 
 /* global sound infos, because it's i nanother task */
 typedef struct {
@@ -62,8 +67,8 @@ typedef struct {
 /* Global variable to specify which sound is played
 Possible values are:
 0 no sound,
-1 Rick Roll,
-2 Queen,
+1 Ambient sound,
+2 Obstacle dodge sound,
 3 Finish sound
 */
 Sound_Infos sound_infos;
@@ -230,6 +235,15 @@ int light_sensor_status() {
 	return 0;
 }
 
+/* Start the harvester */
+void start_harvesting() {
+	OnFwd(ENGINE_H, HARVESTER_SPEED);
+}
+
+void stop_harvesting() {
+	Off(ENGINE_H);
+}
+
 task PlaySoundTask() {
 	string s_file;
 	bool ok = true;
@@ -244,7 +258,7 @@ task PlaySoundTask() {
 			break;
 
 		case 3:
-			s_file = "finish.rso";
+			s_file = "dessert.rso";
 			break;
 
 		default:
@@ -281,92 +295,95 @@ task main() {
 	Pos_Computation p_comp;
 	EStatus status = STATUS_START;
 	int sensor, r;
-	bool skip;
+	bool skip, break_loop = false;
 
 	sound_infos.current = 0;
 
 	zero_coords(coords);
 	zero_p_comp(p_comp);
 	
+	start_harvesting();
+
 	elapsed_time = 0;/* in seconds */
 	first_tick = CurrentTick();
-	while(elapsed_time < TIME_LIMIT) {
+	while(elapsed_time < TIME_LIMIT && !break_loop) {
 		skip = false;
 
-		switch(status) {
-			case STATUS_START:
-			case STATUS_RUNNING:
-				/* We first check the line sensor */
-				sensor = light_sensor_status();
-				switch(sensor) {
-					case 0:
-						if(status == STATUS_START) {
-							status = STATUS_RUNNING;
-						}
-						break;
+		if(sound_infos.current != 0) {
+			play_sound(0, true);
+		}
 
-					case 1:
-						if(status == STATUS_START) {
-							/* ignore*/
-						} else if(status == STATUS_RUNNING && elapsed_time > CRITICAL_TIME) {/* Stop on the start area */
-							set_speed(coords, p_comp, 0);
-							Stop(true);
-						}
-						break;
-
-					case 2:
-						/* Go backwards */
-						skip = true;/* Skip to the next loop iteration */
-						set_speed(coords, p_comp, -LOW_SPEED);
-						Wait(LINE_BACKWARDS_DURATION);
-						set_speed(coords, p_comp, 0);
-						set_angle(coords, p_comp, (coords.angle + 180 + Random(90) * (Random(3)- 1)) % 360);/* mmh */
-						/* TODO : add a while loop to check the white line again */
-						break;
-
-					default:
-						break;
+		/* We first check the line sensor */
+		sensor = light_sensor_status();
+		switch(sensor) {
+			case 0:
+				if(status == STATUS_START) {
+					status = STATUS_RUNNING;
 				}
-				if(!skip) {
-					sensor = obstacle_sensors_status();
-					switch(sensor) {
-						case 1:
-						case 2:
-						case 5:
-							skip = true;/* Skip to the next loop iteration */
-							set_speed(coords, p_comp, -LOW_SPEED);
-							Wait(OBSTACLE_BACKWARDS_DURATION);
-							set_speed(coords, p_comp, 0);
-							while(obstacle_sensors_status() == sensor) {
-								set_angle(coords, p_comp, (coords.angle + 10 * ((sensor == 1)?1:(-1))) % 360);
-							}
-							break;
+				break;
 
-						case 3:
-							skip = true;
-							set_speed(coords, p_comp, 0);
-							set_angle(coords, p_comp, (coords.angle + 10 * (Random(3) - 1)) % 360);
-							break;
-
-						case 4:
-							skip = true;
-							while(r = (Random(3) - 1) == 0);/* get -1 or 1 */
-							set_speed(coords, p_comp, 0);
-							while(obstacle_sensors_status() == sensor) {
-								set_angle(coords, p_comp, (coords.angle + 10 * r) % 360);
-							}
-							break;
-
-						case 0:
-						default:
-							break;
-					}
+			case 1:
+				if(status == STATUS_START) {
+					/* ignore*/
+				} else if(status == STATUS_RUNNING && elapsed_time > CRITICAL_TIME) {/* Stop on the start area */
+					play_sound(2, false);
+					skip = true;
+					break_loop = true;
 				}
+				break;
+
+			case 2:
+				/* Go backwards */
+				skip = true;/* Skip to the next loop iteration */
+				set_speed(coords, p_comp, -LOW_SPEED);
+				Wait(LINE_BACKWARDS_DURATION);
+				set_speed(coords, p_comp, 0);
+				set_angle(coords, p_comp, (coords.angle + 180 + Random(90) * (Random(3)- 1)) % 360);/* mmh */
+				/* TODO : add a while loop to check the white line again */
 				break;
 
 			default:
 				break;
 		}
+		if(!skip) {
+			sensor = obstacle_sensors_status();
+			switch(sensor) {
+				case 1:
+				case 2:
+				case 5:
+					skip = true;/* Skip to the next loop iteration */
+					set_speed(coords, p_comp, -LOW_SPEED);
+					Wait(OBSTACLE_BACKWARDS_DURATION);
+					set_speed(coords, p_comp, 0);
+					while(obstacle_sensors_status() == sensor) {
+						set_angle(coords, p_comp, (coords.angle + 10 * ((sensor == 1)?1:(-1))) % 360);
+					}
+					break;
+
+				case 3:
+					skip = true;
+					set_speed(coords, p_comp, 0);
+					set_angle(coords, p_comp, (coords.angle + 10 * (Random(3) - 1)) % 360);
+					break;
+
+				case 4:
+					skip = true;
+					while(r = (Random(3) - 1) == 0);/* get -1 or 1 */
+					set_speed(coords, p_comp, 0);
+					while(obstacle_sensors_status() == sensor) {
+						set_angle(coords, p_comp, (coords.angle + 10 * r) % 360);
+					}
+					break;
+
+				case 0:
+				default:
+					break;
+			}
+			if(sensor) {
+				play_sound(2, false);
+			}
+		}
+
 		if(!skip) {
 			set_speed(coords, p_comp, REGULAR_SPEED);
 		}
@@ -375,4 +392,6 @@ task main() {
 		Wait(WAIT_INTERVAL);
 	}
 
+	stop_harvesting();
+	set_speed(coords, p_comp, 0);
 }
