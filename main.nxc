@@ -3,7 +3,7 @@
 
 /* time limitation in seconds */
 #define TIME_LIMIT 240
-/* time to ge tto the base */
+/* time to get to the base */
 #define CRITICAL_TIME 180
 /* TODO */
 
@@ -36,7 +36,7 @@
 #define OBSTACLE_BACKWARDS_DURATION 500
 #define OBSTACLE_SHORT_BACKWARDS_DURATION 250
 
-/* The refine the precision, change theese */
+/* To refine the precision, change theese */
 #define L_DARK_THRESHOLD 30
 #define L_WHITE_THRESHOLD 55
 /* the duration of the reverse gear when the white line is seen, in ms */
@@ -118,7 +118,7 @@ void update_pos(Coords &coords, Pos_Computation &p_comp) {
 	coords.y += sin(coords.angle) * dt * p_comp.speed / 1000;
 }
 
-/* changing the speed computes the ne position if needed */
+/* changing the speed computes the new position if needed */
 /* we assume that the both wheels are spinning at the same speed */
 /* This function is used to go strait ahead */
 void set_speed(Coords &coords, Pos_Computation &p_comp, char new_motor_speed) {
@@ -138,7 +138,7 @@ void set_speed(Coords &coords, Pos_Computation &p_comp, char new_motor_speed) {
 	}
 }
 
-/* Positive motor angle : rotate right */
+/* Positive motor angle: rotate right */
 /* The motors SHOULD be stopped  beforce calling this function*/
 void do_rotation(float motor_angle) {
 	char mult = 1;
@@ -161,7 +161,7 @@ void set_angle(Coords &coords, Pos_Computation &p_comp, int new_angle) {
 		/* Need to stop the wheels */
 		set_speed(coords, p_comp, 0);
 
-		/* Need to check the faster way to rebackwardsach the angle */
+		/* Need to check the faster way to reach the angle */
 		angle_difference = (new_angle - coords.angle) % 360;
 		/* between 0 and 180 -> turn left */
 		if(angle_difference > 0 && angle_difference <= 180) {
@@ -183,7 +183,7 @@ void turn_angle(Coords &coords, Pos_Computation &p_comp, int angle) {
 
 /* Get the angle of the robot from the origin. */
 int get_origin_angle(Coords &coords) {
-	return acos(coords.x / sqrt(pow(coords.x, 2) * pow(coords.y, 2)));
+	return acos(coords.x / sqrt(pow(coords.x, 2) + pow(coords.y, 2)));
 }
 
 void sensors_setup() {
@@ -293,8 +293,8 @@ task PlaySoundTask() {
 
 void stop_sound() {
 	if(sound_infos.current) {
-		StopTask(PlaySoundTask);
 		StopSound();
+		StopTask(PlaySoundTask);
 		sound_infos.current = 0;
 	}
 }
