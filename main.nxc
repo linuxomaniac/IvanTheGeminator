@@ -5,6 +5,7 @@
 #define TIME_LIMIT 240
 /* time to ge tto the base */
 #define CRITICAL_TIME 180
+/* TODO */
 
 /* touch sensor left */
 #define SENSOR_T_L IN_1
@@ -28,17 +29,18 @@
 #define HARVESTER_SPEED 100
 
 /* Some range levels */
-#define DISTANT_RANGE 55
-#define WARNING_RANGE 35
-#define EMERGENCY_RANGE 25
+#define DISTANT_RANGE 40
+#define WARNING_RANGE 30
+#define EMERGENCY_RANGE 20
 /* the duration of the reverse gear when an obstacle is seen, in ms */
 #define OBSTACLE_BACKWARDS_DURATION 500
+#define OBSTACLE_SHORT_BACKWARDS_DURATION 250
 
 /* The refine the precision, change theese */
 #define L_DARK_THRESHOLD 30
-#define L_WHITE_THRESHOLD 50
+#define L_WHITE_THRESHOLD 55
 /* the duration of the reverse gear when the white line is seen, in ms */
-#define LINE_BACKWARDS_DURATION 1000
+#define LINE_BACKWARDS_DURATION 1500
 
 /* Motion calculation values (in meters) */
 #define WHEEL_RADIUS 0.08
@@ -46,16 +48,13 @@
 
 /* Motion speed values */
 #define REGULAR_SPEED 100
-#define LOW_SPEED 75
-#define ROTATION_SPEED 50
-
-/* Angle sensivity in degrees */
-#define ANGLE_SENSIVITY 10
+#define REAR_SPEED 100
+#define ROTATION_SPEED 75
 
 /* Rotation PID */
-#define R_PID_P PID_5
-#define R_PID_I PID_5
-#define R_PID_D PID_2
+#define R_PID_P PID_4
+#define R_PID_I PID_7
+#define R_PID_D 0
 
 enum EStatus {STATUS_START, STATUS_RUNNING};
 
@@ -75,25 +74,27 @@ Sound_Infos sound_infos;
 
 /* a structure to compute the position */
 typedef struct {
-	float speed, last_speed;
+	float speed;
+	char motor_speed, last_motor_speed;
 	unsigned long last_tick;
 } Pos_Computation;
 
 /* a structure to hold the position data, and to help with the computation */
 typedef struct {
-	float angle;/* must ALWAYS be between 0 and 359.99999999999999999 */
+	int angle;/* must ALWAYS be between 0 and 359 */
 	float x, y;
 } Coords;
 
-void zero_coords(Coords coords) {
+void zero_coords(Coords &coords) {
 	coords.angle = 0;
 	coords.x = 0;
 	coords.y = 0;
 }
 
-void zero_p_comp(Pos_Computation p_comp) {
+void zero_p_comp(Pos_Computation &p_comp) {
 	p_comp.speed = 0;
-	p_comp.last_speed = 0;
+	p_comp.motor_speed = 0;
+	p_comp.last_motor_speed = 0;
 	p_comp.last_tick = 0;
 }
 
@@ -103,28 +104,30 @@ float motor_speed_to_speed(char motor_speed) {
 }
 
 /* we need to have a relation between the wheels angles and the robot angle */
-float angle_to_motor_angle(float angle) {
+float angle_to_motor_angle(int angle) {
 	return angle * WHEELS_SPACING / WHEEL_RADIUS;
 }
 
-void update_pos(Coords coords, Pos_Computation p_comp) {
+void update_pos(Coords &coords, Pos_Computation &p_comp) {
 	unsigned long tick = CurrentTick(), dt;
 
 	dt = tick - p_comp.last_tick;
 	p_comp.last_tick = tick;
 
-	coords.x += cos(coords.angle) * dt * p_comp.speed;
-	coords.y += sin(coords.angle) * dt * p_comp.speed;
+	coords.x += cos(coords.angle) * dt * p_comp.speed / 1000;
+	coords.y += sin(coords.angle) * dt * p_comp.speed / 1000;
 }
 
 /* changing the speed computes the ne position if needed */
 /* we assume that the both wheels are spinning at the same speed */
 /* This function is used to go strait ahead */
-void set_speed(Coords coords, Pos_Computation p_comp, char new_motor_speed) {
-	update_pos(coords, p_comp);
+void set_speed(Coords &coords, Pos_Computation &p_comp, char new_motor_speed) {
+	/* Unfortunately, it doesn't work, and we can't return to the starting point */
+	/*update_pos(coords, p_comp);*/
 	
-	if(new_motor_speed != p_comp.speed) {
-		p_comp.last_speed = p_comp.speed;
+	if(new_motor_speed != p_comp.motor_speed) {
+		p_comp.last_motor_speed = p_comp.motor_speed;
+		p_comp.motor_speed = new_motor_speed;
 		p_comp.speed = motor_speed_to_speed(new_motor_speed);
 
 		if(new_motor_speed != 0) {
@@ -138,35 +141,49 @@ void set_speed(Coords coords, Pos_Computation p_comp, char new_motor_speed) {
 /* Positive motor angle : rotate right */
 /* The motors SHOULD be stopped  beforce calling this function*/
 void do_rotation(float motor_angle) {
-	OnFwdSync(ENGINE_B, ROTATION_SPEED, 0);
-	/*RotateMotor(ENGINE_R, ROTATION_SPEED, motor_angle);
-	RotateMotor(ENGINE_L, ROTATION_SPEED, -motor_angle);*/
+	char mult = 1;
 
+	if(motor_angle < 0) {
+		motor_angle *= -1;
+		mult = -1;
+	}
 	/* TODO: PID modified with angle? */
-	RotateMotorExPID(ENGINE_B, ROTATION_SPEED, motor_angle, 100, true, true, R_PID_P, R_PID_I, R_PID_D);
+	RotateMotorExPID(ENGINE_B, ROTATION_SPEED, motor_angle, 100 * mult, true, true, R_PID_P, R_PID_I, R_PID_D);
 }
 
 /* Motion relative functions, they all update the position */
 /* absolute angle, from the x and y pos and the current angle */
-void set_angle(Coords coords, Pos_Computation p_comp, float new_angle) {
-	float angle_difference, motor_angle;
+void set_angle(Coords &coords, Pos_Computation &p_comp, int new_angle) {
+	int angle_difference;
+	float motor_angle;
 
-	if(coords.angle - ANGLE_SENSIVITY < new_angle && new_angle < coords.angle + (360 - ANGLE_SENSIVITY)) {/* No need to interrupt the motion */
+	if(coords.angle != new_angle) {/* No need to interrupt the motion */
 		/* Need to stop the wheels */
 		set_speed(coords, p_comp, 0);
 
-		angle_difference = ((new_angle - coords.angle) % 360);
-
 		/* Need to check the faster way to rebackwardsach the angle */
+		angle_difference = (new_angle - coords.angle) % 360;
 		/* between 0 and 180 -> turn left */
-		if(new_angle > 0 && new_angle < 180) {
-			motor_angle = angle_to_motor_angle(-angle_difference);
+		if(angle_difference > 0 && angle_difference <= 180) {
+			angle_difference = ((new_angle - coords.angle) % 360);
 		} else {/* between 180 and 360 -> turn right*/
-			motor_angle = angle_to_motor_angle(angle_difference);
+			angle_difference = -((360 - new_angle + coords.angle) % 360);
 		}
+
+		motor_angle = angle_to_motor_angle(angle_difference);
 		do_rotation(motor_angle);
 		coords.angle = new_angle;
 	}
+}
+
+/* calls set_angle and turns relatively to a specified angle */
+void turn_angle(Coords &coords, Pos_Computation &p_comp, int angle) {
+	set_angle(coords, p_comp, (angle + coords.angle) % 360);
+}
+
+/* Get the angle of the robot from the origin. */
+int get_origin_angle(Coords &coords) {
+	return acos(coords.x / sqrt(pow(coords.x, 2) * pow(coords.y, 2)));
 }
 
 void sensors_setup() {
@@ -277,6 +294,7 @@ task PlaySoundTask() {
 void stop_sound() {
 	if(sound_infos.current) {
 		StopTask(PlaySoundTask);
+		StopSound();
 		sound_infos.current = 0;
 	}
 }
@@ -302,21 +320,20 @@ task main() {
 
 	sound_infos.current = 0;
 
+	first_tick = CurrentTick();
+
 	zero_coords(coords);
 	zero_p_comp(p_comp);
 	
 	sensors_setup();
 
-	set_angle(coords, p_comp, 270);
-
-	/*start_harvesting();*/
+	start_harvesting();
 
 	elapsed_time = 0;/* in seconds */
-	first_tick = CurrentTick();
-	while(false && elapsed_time < TIME_LIMIT && !break_loop) {
+	while(elapsed_time < TIME_LIMIT && !break_loop) {
 		skip = false;
 
-		if(sound_infos.current != 0) {
+		if(!sound_infos.current) {
 			play_sound(1, true);
 		}
 
@@ -333,7 +350,6 @@ task main() {
 				if(status == STATUS_START) {
 					/* ignore*/
 				} else if(status == STATUS_RUNNING && elapsed_time > CRITICAL_TIME) {/* Stop on the start area */
-					play_sound(2, false);
 					skip = true;
 					break_loop = true;
 				}
@@ -342,11 +358,14 @@ task main() {
 			case 2:
 				/* Go backwards */
 				skip = true;/* Skip to the next loop iteration */
-				set_speed(coords, p_comp, -LOW_SPEED);
+				set_speed(coords, p_comp, -REAR_SPEED);
 				Wait(LINE_BACKWARDS_DURATION);
 				set_speed(coords, p_comp, 0);
-				set_angle(coords, p_comp, (coords.angle + 90) % 360);/* mmh */
-				/* TODO : add a while loop to check the white line again */
+				if(elapsed_time > CRITICAL_TIME) {/* Always turn left */
+					turn_angle(coords, p_comp, 90);
+				} else {
+					turn_angle(coords, p_comp, (Random(2) == 0)?90:-90);
+				}
 				break;
 
 			default:
@@ -359,24 +378,25 @@ task main() {
 				case 2:
 				case 5:
 					skip = true;/* Skip to the next loop iteration */
-					set_speed(coords, p_comp, -LOW_SPEED);
+					set_speed(coords, p_comp, -REAR_SPEED);
 					Wait(OBSTACLE_BACKWARDS_DURATION);
 					set_speed(coords, p_comp, 0);
-					set_angle(coords, p_comp, (coords.angle + 90 * ((sensor == 1)?1:(-1))) % 360);
+					turn_angle(coords, p_comp, ((sensor == 1)?-90:90));
 					break;
 
 				case 3:
 					skip = true;
+					set_speed(coords, p_comp, -REAR_SPEED);
+					Wait(OBSTACLE_BACKWARDS_DURATION);
 					set_speed(coords, p_comp, 0);
-					set_angle(coords, p_comp, (coords.angle + 60) % 360);
+					turn_angle(coords, p_comp, (Random(2) == 0)?60:-60);
 					break;
 
 				case 4:
 					skip = true;
 					set_speed(coords, p_comp, 0);
-					while(obstacle_sensors_status() == sensor) {
-						set_angle(coords, p_comp, (coords.angle + 20) % 360);
-					}
+					turn_angle(coords, p_comp, 60);
+
 					break;
 
 				case 0:
@@ -397,5 +417,10 @@ task main() {
 	}
 
 	stop_harvesting();
+
 	set_speed(coords, p_comp, 0);
+
+	play_sound(3, false);
+
+	Wait(5000);
 }

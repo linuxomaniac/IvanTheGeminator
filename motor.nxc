@@ -1,9 +1,9 @@
 #define ENGINE_H OUT_C
 
 task main() {
-	OnFwd(ENGINE_H, 100);
+	OnFwd(OUT_ABC, 100);
 	while(true) {
-		NumOut(0, LCD_LINE3, MotorActualSpeed(ENGINE_H), 1);
+		NumOut(0, LCD_LINE3, MotorActualSpeed(OUT_ABC), 1);
 		Wait(100);
 	}
 }
