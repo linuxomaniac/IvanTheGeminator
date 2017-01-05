@@ -1,5 +1,5 @@
 /* time to wait between each loop pass, in ms */
-#define WAIT_INTERVAL 100
+#define WAIT_INTERVAL 20
 
 /* time limitation in seconds */
 #define TIME_LIMIT 240
@@ -28,25 +28,25 @@
 #define HARVESTER_SPEED 100
 
 /* Some range levels */
-#define DISTANT_RANGE 70
+#define DISTANT_RANGE 55
 #define WARNING_RANGE 35
-#define EMERGENCY_RANGE 20
+#define EMERGENCY_RANGE 25
 /* the duration of the reverse gear when an obstacle is seen, in ms */
-#define OBSTACLE_BACKWARDS_DURATION 200
+#define OBSTACLE_BACKWARDS_DURATION 500
 
 /* The refine the precision, change theese */
-#define L_DARK_THRESHOLD 20
-#define L_WHITE_THRESHOLD 40
+#define L_DARK_THRESHOLD 30
+#define L_WHITE_THRESHOLD 50
 /* the duration of the reverse gear when the white line is seen, in ms */
-#define LINE_BACKWARDS_DURATION 300
+#define LINE_BACKWARDS_DURATION 1000
 
 /* Motion calculation values (in meters) */
-#define WHEEL_RADIUS 0.078
-#define WHEELS_SPACING 0.104
+#define WHEEL_RADIUS 0.08
+#define WHEELS_SPACING 0.129
 
 /* Motion speed values */
-#define REGULAR_SPEED 75
-#define LOW_SPEED 50
+#define REGULAR_SPEED 100
+#define LOW_SPEED 75
 #define ROTATION_SPEED 50
 
 /* Angle sensivity in degrees */
@@ -155,9 +155,9 @@ void set_angle(Coords coords, Pos_Computation p_comp, float new_angle) {
 		/* Need to stop the wheels */
 		set_speed(coords, p_comp, 0);
 
-		angle_difference = ((new_angle - coords.angle) % 360);/* TODO: 2 inside the modulo */
+		angle_difference = ((new_angle - coords.angle) % 360);
 
-		/* Need to check the faster way to reach the angle */
+		/* Need to check the faster way to rebackwardsach the angle */
 		/* between 0 and 180 -> turn left */
 		if(new_angle > 0 && new_angle < 180) {
 			motor_angle = angle_to_motor_angle(-angle_difference);
@@ -174,10 +174,6 @@ void sensors_setup() {
 	SetSensorTouch(SENSOR_T_R);
 	SetSensorLight(SENSOR_L);
 	SetSensorUltrasonic(SENSOR_US);
-
-	/*SetSensorMode(SENSOR_L, IN_MODE_PCTFULLSCALE);
-	ResetSensor(SENSOR_L);*/
-
 }
 
 /* Checks the obstacles sensors status :
@@ -247,28 +243,35 @@ void stop_harvesting() {
 task PlaySoundTask() {
 	string s_file;
 	bool ok = true;
+	unsigned long w = 0;
 
 	switch(sound_infos.current) {
 		case 1:
 			s_file = "rick.rso";
+			w = TIME_LIMIT * 1000;
 			break;
 
 		case 2:
 			s_file = "queen.rso";
+			w = 3000;
 			break;
 
 		case 3:
 			s_file = "dessert.rso";
+			w = 1500;
 			break;
 
 		default:
+			w = 0;
 			ok = false;
 			break;
 	}
 
 	if(ok) {
 		PlayFileEx(s_file, 4, sound_infos.loop);
+		Wait(w);
 	}
+	sound_infos.current = 0;
 }
 
 void stop_sound() {
@@ -302,15 +305,19 @@ task main() {
 	zero_coords(coords);
 	zero_p_comp(p_comp);
 	
-	start_harvesting();
+	sensors_setup();
+
+	set_angle(coords, p_comp, 270);
+
+	/*start_harvesting();*/
 
 	elapsed_time = 0;/* in seconds */
 	first_tick = CurrentTick();
-	while(elapsed_time < TIME_LIMIT && !break_loop) {
+	while(false && elapsed_time < TIME_LIMIT && !break_loop) {
 		skip = false;
 
 		if(sound_infos.current != 0) {
-			play_sound(0, true);
+			play_sound(1, true);
 		}
 
 		/* We first check the line sensor */
@@ -338,7 +345,7 @@ task main() {
 				set_speed(coords, p_comp, -LOW_SPEED);
 				Wait(LINE_BACKWARDS_DURATION);
 				set_speed(coords, p_comp, 0);
-				set_angle(coords, p_comp, (coords.angle + 180 + Random(90) * (Random(3)- 1)) % 360);/* mmh */
+				set_angle(coords, p_comp, (coords.angle + 90) % 360);/* mmh */
 				/* TODO : add a while loop to check the white line again */
 				break;
 
@@ -355,23 +362,20 @@ task main() {
 					set_speed(coords, p_comp, -LOW_SPEED);
 					Wait(OBSTACLE_BACKWARDS_DURATION);
 					set_speed(coords, p_comp, 0);
-					while(obstacle_sensors_status() == sensor) {
-						set_angle(coords, p_comp, (coords.angle + 10 * ((sensor == 1)?1:(-1))) % 360);
-					}
+					set_angle(coords, p_comp, (coords.angle + 90 * ((sensor == 1)?1:(-1))) % 360);
 					break;
 
 				case 3:
 					skip = true;
 					set_speed(coords, p_comp, 0);
-					set_angle(coords, p_comp, (coords.angle + 10 * (Random(3) - 1)) % 360);
+					set_angle(coords, p_comp, (coords.angle + 60) % 360);
 					break;
 
 				case 4:
 					skip = true;
-					while(r = (Random(3) - 1) == 0);/* get -1 or 1 */
 					set_speed(coords, p_comp, 0);
 					while(obstacle_sensors_status() == sensor) {
-						set_angle(coords, p_comp, (coords.angle + 10 * r) % 360);
+						set_angle(coords, p_comp, (coords.angle + 20) % 360);
 					}
 					break;
 

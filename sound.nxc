@@ -1,11 +1,6 @@
-task sp() {
-	PlayFileEx("queen.rso", 255, true);
-}
-
 task main() {
 	unsigned int a = 0;
-
-	StartTask(sp);
+	PlayFileEx("queen.rso", 4, true);
 
 	while(true) {
 		NumOut(0, LCD_LINE3, a, 0x001);

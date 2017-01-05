@@ -1,0 +1,9 @@
+#define SENSOR_US IN_4
+
+task main() {
+	SetSensorUltrasonic(SENSOR_US);
+	while(true) {
+		NumOut(0,LCD_LINE3, SensorUS(SENSOR_US), 0x001);
+		Wait(100);
+	}
+}
